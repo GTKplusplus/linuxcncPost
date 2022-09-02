@@ -1019,7 +1019,7 @@ function onCyclePoint(x, y, z) {
         //move to starting probe position
         writeBlock(gAbsIncModal.format(90), gMotionModal.format(1),
         zOutput.format(z), xOutput.format(x),
-        yOutput.format(y), feedFormat.format(cycle.safeFeed));
+        yOutput.format(y), feedOutput.format(cycle.safeFeed));
         //write nominal information
         writeComment(
           "LOG, G800 N" + pointNumber+
@@ -1036,9 +1036,10 @@ function onCyclePoint(x, y, z) {
         probing_status=1;
       } else if(probing_status==1){
         //probe at measureFeed
+        writeBlock(feedOutput.format(cycle.measureFeed));
         writeBlock(gAbsIncModal.format(90), gFormat.format(38.2),
         zOutput.format(z), xOutput.format(x),
-        yOutput.format(y), feedFormat.format(cycle.measureFeed));
+        yOutput.format(y));
 
         //write measured information
         
@@ -1048,7 +1049,7 @@ function onCyclePoint(x, y, z) {
       } else if(probing_status==2){
         writeBlock(gAbsIncModal.format(90), gMotionModal.format(1),
         zOutput.format(z), xOutput.format(x),
-        yOutput.format(y), feedFormat.format(cycle.safeFeed));
+        yOutput.format(y), feedOutput.format(cycle.safeFeed));
       }
       return;
   /*
