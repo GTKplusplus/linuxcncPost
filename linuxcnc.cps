@@ -1023,12 +1023,12 @@ function onCyclePoint(x, y, z) {
         //write nominal information
         writeComment(
           "LOG, G800 N" + pointNumber+
-          " X" + xyzFormat.format(cycle.nominalX),
-          " Y" + xyzFormat.format(cycle.nominalY),
-          " Z" + xyzFormat.format(cycle.nominalZ),
-          " I" + ijkFormat.format(cycle.nominalI),
-          " J" + ijkFormat.format(cycle.nominalJ),
-          " K" + ijkFormat.format(cycle.nominalK),
+          " X" + xyzFormat.format(cycle.nominalX)+
+          " Y" + xyzFormat.format(cycle.nominalY)+
+          " Z" + xyzFormat.format(cycle.nominalZ)+
+          " I" + ijkFormat.format(cycle.nominalI)+
+          " J" + ijkFormat.format(cycle.nominalJ)+
+          " K" + ijkFormat.format(cycle.nominalK)+
           conditional(hasParameter("operation:inspectSurfaceOffset"), " O" + xyzFormat.format(getParameter("operation:inspectSurfaceOffset"))) +
           conditional(hasParameter("operation:inspectUpperTolerance"), " U" + xyzFormat.format(getParameter("operation:inspectUpperTolerance"))) +
           conditional(hasParameter("operation:inspectLowerTolerance"), " L" + xyzFormat.format(getParameter("operation:inspectLowerTolerance")))
@@ -1037,15 +1037,15 @@ function onCyclePoint(x, y, z) {
       } else if(probing_status==1){
         //probe at measureFeed
         writeBlock(feedOutput.format(cycle.measureFeed));
-        writeBlock(gAbsIncModal.format(90), gFormat.format(38.2),
+        writeBlock(gAbsIncModal.format(90), gMotionModal.format(38.2),
         zOutput.format(z), xOutput.format(x),
         yOutput.format(y));
 
         //write measured information
-        
         writeComment("LOG, G801 N"+pointNumber+
         " X#<_x> Y#<_y> Z#<_z> R"+currentSection.getTool().diameter/2+".");
         probing_status=2;
+
       } else if(probing_status==2){
         writeBlock(gAbsIncModal.format(90), gMotionModal.format(1),
         zOutput.format(z), xOutput.format(x),
@@ -1547,7 +1547,7 @@ function onCommand(command) {
     writeComment("LOG, START");
     writeComment("LOG, RESULTSFILE "+resFile);
     writeComment("LOG, DOCUMENTID "+ getGlobalParameter("document-id", ""));
-    writeComment("LOG, MODELVERSION ",+getGlobalParameter("model-version", ""));
+    writeComment("LOG, MODELVERSION "+getGlobalParameter("model-version", ""));
     writeComment("LOG, TIMESTAMP " + currentDate.getFullYear() % 100 +
     ("0" + (currentDate.getMonth() + 1)).slice(-2) + currentDate.getDate() + " " + currentDate.getHours() +
     ("0" + currentDate.getMinutes()).slice(-2) +
