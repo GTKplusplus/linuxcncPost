@@ -92,21 +92,20 @@ properties = {
     value      : true,
     scope      : "post"
   },
-  useG64:{
-    title      : "Use G64",
-    description: "Use G64 for motion smoothing. Turning this off uses g61.",
+  useSmoothing: {
+    title      : "Use smoothing",
+    description: "Defines the smoothing control mode (G64/G61).",
     group      : "preferences",
-    type       : "boolean",
-    value      : true,
-    scope      : "post"
-  },
-  G64Tolerance: {
-    title      : "G64 tolerance",
-    description: "The tolerance for G64 motion smoothing.",
-    group      : "preferences",
-    type       : "number",
-    value      : 0.005,
-    scope      : "post"
+    type       : "enum",
+    values     : [
+      {title:"G64", id:"0"},
+      {title:"G64 with P", id:"1"},
+      {title:"G64 with PQ", id:"2"},
+      {title:"G61", id:"3"},
+      {title:"G61.1", id:"4"}
+    ],
+    value: "2",
+    scope: "post"
   },
   useM600: {
     title      : "Use M600",
@@ -160,7 +159,14 @@ properties = {
     ],
     value: "G53",
     scope: "post"
-  }
+  },
+  usingManualToolChange: {
+    title      : "Manual Tool Change",
+    description: "If true, the post processor will never output g49 to clear applied g43 offsets, since they won't be recovered from the tool table",
+    group      : "preferences",
+    type       : "boolean",
+    value      : true,
+}
 };
 
 // wcs definiton
@@ -265,7 +271,12 @@ function writeBlock() {
     writeWords(arguments);
   }
 }
-
+function writeToolBlock() {
+  var show = getProperty("showSequenceNumbers");
+  setProperty("showSequenceNumbers", (show == "true" || show == "toolChange") ? "true" : "false");
+  writeBlock(arguments);
+  setProperty("showSequenceNumbers", show);
+}
 /**
   Writes the specified optional block.
 */
@@ -300,8 +311,8 @@ function onOpen() {
     maximumCircularSweep = toRad(90); // avoid potential center calculation errors for CNC
   }
 
-  if (true) { // Adding 4th axis on the table.
-    var aAxis = createAxis({coordinate:0, table:true, axis:[1, 0, 0], range: [-360, 359.99999], cyclic: true, preference:1});
+  if (true) { // Adding 4th axis on the table. range: [-360, 359.99999]
+    var aAxis = createAxis({coordinate:0, table:true, axis:[1, 0, 0], cyclic: true, preference:1});
     machineConfiguration = new MachineConfiguration(aAxis);
 
     setMachineConfiguration(machineConfiguration);
@@ -433,12 +444,6 @@ function onOpen() {
     writeBlock(gUnitModal.format(21));
     break;
   }
-  if(getProperty("useG64")) {
-    writeBlock(gFormat.format(64), "P"+getProperty("G64Tolerance"));
-  }else
-  {
-    writeBlock(gformat.format(61));
-  }
   if (getProperty("useM600")) {
   writeBlock(mFormat.format(600));
   } //set first M6 as reference
@@ -479,6 +484,140 @@ function FeedContext(id, description, feed) {
   this.description = description;
   this.feed = feed;
 }
+// Start of smoothing logic
+var smoothingSettings = {
+  roughing              : 3, // roughing level for smoothing in automatic mode
+  semi                  : 2, // semi-roughing level for smoothing in automatic mode
+  semifinishing         : 2, // semi-finishing level for smoothing in automatic mode
+  finishing             : 1, // finishing level for smoothing in automatic mode
+  thresholdRoughing     : toPreciseUnit(0.5, MM), // operations with stock/tolerance above that threshold will use roughing level in automatic mode
+  thresholdFinishing    : toPreciseUnit(0.05, MM), // operations with stock/tolerance below that threshold will use finishing level in automatic mode
+  thresholdSemiFinishing: toPreciseUnit(0.1, MM), // operations with stock/tolerance above finishing and below threshold roughing that threshold will use semi finishing level in automatic mode
+
+  differenceCriteria: "tolerance", // options: "level", "tolerance", "both". Specifies criteria when output smoothing codes
+  autoLevelCriteria : "stock", // use "stock" or "tolerance" to determine levels in automatic mode
+  cancelCompensation: false // tool length compensation must be canceled prior to changing the smoothing level
+};
+
+// collected state below, do not edit
+var smoothing = {
+  cancel     : false, // cancel tool length prior to update smoothing for this operation
+  isActive   : false, // the current state of smoothing
+  isAllowed  : false, // smoothing is allowed for this operation
+  isDifferent: false, // tells if smoothing levels/tolerances/both are different between operations
+  level      : -1, // the active level of smoothing
+  tolerance  : -1, // the current operation tolerance
+  force      : false // smoothing needs to be forced out in this operation
+};
+
+function initializeSmoothing() {
+  var previousLevel = smoothing.level;
+  var previousTolerance = smoothing.tolerance;
+
+  // determine new smoothing levels and tolerances
+  smoothing.level = parseInt(getProperty("useSmoothing"), 10);
+  smoothing.level = isNaN(smoothing.level) ? -1 : smoothing.level;
+  smoothing.tolerance = Math.max(getParameter("operation:tolerance", smoothingSettings.thresholdFinishing), 0);
+
+  // automatically determine smoothing level
+  if (smoothing.level == 9999) {
+    if (smoothingSettings.autoLevelCriteria == "stock") { // determine auto smoothing level based on stockToLeave
+      var stockToLeave = xyzFormat.getResultingValue(getParameter("operation:stockToLeave", 0));
+      var verticalStockToLeave = xyzFormat.getResultingValue(getParameter("operation:verticalStockToLeave", 0));
+      if (((stockToLeave >= smoothingSettings.thresholdRoughing) && (verticalStockToLeave >= smoothingSettings.thresholdRoughing)) ||
+          getParameter("operation:strategy", "") == "face") {
+        smoothing.level = smoothingSettings.roughing; // set roughing level
+      } else {
+        if (((stockToLeave >= smoothingSettings.thresholdSemiFinishing) && (stockToLeave < smoothingSettings.thresholdRoughing)) &&
+          ((verticalStockToLeave >= smoothingSettings.thresholdSemiFinishing) && (verticalStockToLeave  < smoothingSettings.thresholdRoughing))) {
+          smoothing.level = smoothingSettings.semi; // set semi level
+        } else if (((stockToLeave >= smoothingSettings.thresholdFinishing) && (stockToLeave < smoothingSettings.thresholdSemiFinishing)) &&
+          ((verticalStockToLeave >= smoothingSettings.thresholdFinishing) && (verticalStockToLeave  < smoothingSettings.thresholdSemiFinishing))) {
+          smoothing.level = smoothingSettings.semifinishing; // set semi-finishing level
+        } else {
+          smoothing.level = smoothingSettings.finishing; // set finishing level
+        }
+      }
+    } else { // detemine auto smoothing level based on operation tolerance instead of stockToLeave
+      if (smoothing.tolerance >= smoothingSettings.thresholdRoughing ||
+          getParameter("operation:strategy", "") == "face") {
+        smoothing.level = smoothingSettings.roughing; // set roughing level
+      } else {
+        if (((smoothing.tolerance >= smoothingSettings.thresholdSemiFinishing) && (smoothing.tolerance < smoothingSettings.thresholdRoughing))) {
+          smoothing.level = smoothingSettings.semi; // set semi level
+        } else if (((smoothing.tolerance >= smoothingSettings.thresholdFinishing) && (smoothing.tolerance < smoothingSettings.thresholdSemiFinishing))) {
+          smoothing.level = smoothingSettings.semifinishing; // set semi-finishing level
+        } else {
+          smoothing.level = smoothingSettings.finishing; // set finishing level
+        }
+      }
+    }
+  }
+  if (smoothing.level == -1) { // useSmoothing is disabled
+    smoothing.isAllowed = false;
+  } else { // do not output smoothing for the following operations
+    smoothing.isAllowed = !(currentSection.getTool().type == TOOL_PROBE || currentSection.checkGroup(STRATEGY_DRILLING));
+  }
+  if (!smoothing.isAllowed) {
+    smoothing.level = -1;
+    smoothing.tolerance = -1;
+  }
+
+  switch (smoothingSettings.differenceCriteria) {
+  case "level":
+    smoothing.isDifferent = smoothing.level != previousLevel;
+    break;
+  case "tolerance":
+    smoothing.isDifferent = xyzFormat.areDifferent(smoothing.tolerance, previousTolerance);
+    break;
+  case "both":
+    smoothing.isDifferent = smoothing.level != previousLevel || xyzFormat.areDifferent(smoothing.tolerance, previousTolerance);
+    break;
+  default:
+    error(localize("Unsupported smoothing criteria."));
+    return;
+  }
+
+  // tool length compensation needs to be canceled when smoothing state/level changes
+  if (smoothingSettings.cancelCompensation) {
+    smoothing.cancel = !isFirstSection() && smoothing.isDifferent;
+  }
+}
+
+function setSmoothing(mode) {
+  if (mode == smoothing.isActive && (!mode || !smoothing.isDifferent) && !smoothing.force) {
+    return; // return if smoothing is already active or is not different
+  }
+  if (typeof lengthCompensationActive != "undefined" && smoothingSettings.cancelCompensation) {
+    validate(!lengthCompensationActive, "Length compensation is active while trying to update smoothing.");
+  }
+  if (mode) { // enable smoothing
+    var _tolerance = xyzFormat.format(smoothing.tolerance);
+    switch (getProperty("useSmoothing")) {
+    case "0":
+      writeBlock(gFormat.format(64));
+      break;
+    case "1":
+      writeBlock(gFormat.format(64), "P" +  _tolerance);
+      break;
+    case "2":
+      writeBlock(gFormat.format(64), "P" +  _tolerance, "Q" + _tolerance);
+      break;
+    case "3":
+      writeBlock(gFormat.format(61));
+      break;
+    case "4":
+      writeBlock(gFormat.format(61.1));
+      break;
+    }
+  } else { // disable smoothing
+    // no gcodes to disable smoothing available
+  }
+  smoothing.isActive = mode;
+  smoothing.force = false;
+  smoothing.isDifferent = false;
+}
+// End of smoothing logic
 
 function getFeed(f) {
   if (activeMovements) {
@@ -751,7 +890,9 @@ function onSection() {
     (!machineConfiguration.isMultiAxisConfiguration() && currentSection.isMultiAxis()) ||
     (!getPreviousSection().isMultiAxis() && currentSection.isMultiAxis() ||
       getPreviousSection().isMultiAxis() && !currentSection.isMultiAxis()); // force newWorkPlane between indexing and simultaneous operations
-  if (insertToolCall || newWorkOffset || newWorkPlane) {
+      initializeSmoothing();
+
+      if (insertToolCall || newWorkOffset || newWorkPlane || smoothing.cancel) {
 
     // stop spindle before retract during tool change
     if (insertToolCall && !isFirstSection()) {
@@ -760,6 +901,9 @@ function onSection() {
 
     // retract to safe plane
     writeRetract(Z);
+        if (smoothing.cancel) {
+      setSmoothing(false);
+    }
   }
 
   if (hasParameter("operation-comment")) {
@@ -797,7 +941,7 @@ function onSection() {
       warning(localize("Tool number exceeds maximum value."));
     }
 
-    writeBlock("T" + toolFormat.format(tool.number), mFormat.format(6));
+    writeToolBlock("T" + toolFormat.format(tool.number), mFormat.format(6));
     if (tool.comment) {
       writeComment(tool.comment);
     }
@@ -863,6 +1007,7 @@ function onSection() {
   }
 
   forceXYZ();
+  setSmoothing(smoothing.isAllowed);
 
   if (machineConfiguration.isMultiAxisConfiguration()) { // use 5-axis indexing for multi-axis mode
     var abc = new Vector(0, 0, 0);
@@ -1217,6 +1362,7 @@ function onCycleEnd() {
     gMotionModal.reset();
   }
 }
+
 
 var pendingRadiusCompensation = -1;
 
@@ -1577,7 +1723,9 @@ function onCommand(command) {
 
 function onSectionEnd() {
   if (currentSection.isMultiAxis()) {
-    writeBlock(gMotionModal.format(49));
+    if(!getProperty("usingManualToolChange")){
+      writeBlock(gMotionModal.format(49));
+    }
     // the code below gets the machine angles from previous operation.  closestABC must also be set to true
     if (currentSection.isOptimizedForMachine()) {
       currentMachineABC = currentSection.getFinalToolAxisABC();
