@@ -98,11 +98,11 @@ properties = {
     group      : "preferences",
     type       : "enum",
     values     : [
-      {title:"G64", id:"0"},
-      {title:"G64 with P", id:"1"},
-      {title:"G64 with PQ", id:"2"},
-      {title:"G61", id:"3"},
-      {title:"G61.1", id:"4"}
+      {title:"G64/Best speed with no tolerances", id:"0"},
+      {title:"G64 with P/Motion blending", id:"1"},
+      {title:"G64 with PQ/Motion blending with naive cam tolerance", id:"2"},
+      {title:"G61/Exact Path", id:"3"},
+      {title:"G61.1/Exact Stop", id:"4"}
     ],
     value: "2",
     scope: "post"
@@ -166,7 +166,13 @@ properties = {
     group      : "preferences",
     type       : "boolean",
     value      : true,
-}
+  },
+  useInverseTimeFeed: {
+    title      : "Inverse Time Feed",
+    description: "If true, the post processor will output inverse time feed mode (G93) instead of units per minute (G94)",
+    group      : "preferences",
+    type       : "boolean",
+    value      : false,}
 };
 
 // wcs definiton
@@ -220,6 +226,7 @@ var aOutput = createVariable({prefix:"A"}, abcFormat);
 var bOutput = createVariable({prefix:"B"}, abcFormat);
 var cOutput = createVariable({prefix:"C"}, abcFormat);
 var feedOutput = createVariable({prefix:"F"}, feedFormat);
+var inverseTimeOutput = createVariable({prefix:"F", force:true}, feedFormat);
 var sOutput = createVariable({prefix:"S", force:true}, rpmFormat);
 var dOutput = createVariable({}, dFormat);
 
@@ -238,6 +245,7 @@ var gRetractModal = createModal({}, gFormat); // modal group 10 // G98-99
 
 // fixed settings
 var firstFeedParameter = 100;
+var maxInverseTime = 45000;
 
 var WARNING_WORK_OFFSET = 0;
 
@@ -434,8 +442,11 @@ function onOpen() {
   }
 
   // absolute coordinates, feed per min, and incremental arc center mode
-  writeBlock(gAbsIncModal.format(90), gFeedModeModal.format(94), gPlaneModal.format(17), gFormat.format(91.1));
-
+  if(properties.useInverseTimeFeed){
+    writeBlock(gAbsIncModal.format(90), gFeedModeModal.format(93), gPlaneModal.format(17), gFormat.format(91.1));
+  } else {
+    writeBlock(gAbsIncModal.format(90), gFeedModeModal.format(94), gPlaneModal.format(17), gFormat.format(91.1));
+  }
   switch (unit) {
   case IN:
     writeBlock(gUnitModal.format(20));
@@ -510,6 +521,10 @@ var smoothing = {
   force      : false // smoothing needs to be forced out in this operation
 };
 
+
+
+
+
 function initializeSmoothing() {
   var previousLevel = smoothing.level;
   var previousTolerance = smoothing.tolerance;
@@ -563,6 +578,7 @@ function initializeSmoothing() {
     smoothing.tolerance = -1;
   }
 
+  
   switch (smoothingSettings.differenceCriteria) {
   case "level":
     smoothing.isDifferent = smoothing.level != previousLevel;
@@ -620,6 +636,9 @@ function setSmoothing(mode) {
 // End of smoothing logic
 
 function getFeed(f) {
+    if (properties.useInverseTimeFeed) {
+      forceFeed();
+    }
   if (activeMovements) {
     var feedContext = activeMovements[movement];
     if (feedContext != undefined) {
@@ -1083,6 +1102,7 @@ function onSection() {
   if (getProperty("useParametricFeed") &&
       hasParameter("operation-strategy") &&
       (getParameter("operation-strategy") != "drill") && // legacy
+      (!getProperty("useInverseTimeFeed")) &&
       !(currentSection.hasAnyCycle && currentSection.hasAnyCycle())) {
     if (!insertToolCall &&
         activeMovements &&
@@ -1215,6 +1235,7 @@ function onCyclePoint(x, y, z) {
     switch (cycleType) {
     case "drilling":
       writeBlock(
+				gFeedModeModal.format(94), 
         gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(81),
         getCommonCycle(x, y, z, cycle.retract),
         feedOutput.format(F)
@@ -1223,6 +1244,7 @@ function onCyclePoint(x, y, z) {
     case "counter-boring":
       if (P > 0) {
         writeBlock(
+					gFeedModeModal.format(94), 
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(82),
           getCommonCycle(x, y, z, cycle.retract),
           "P" + secFormat.format(P),
@@ -1230,6 +1252,7 @@ function onCyclePoint(x, y, z) {
         );
       } else {
         writeBlock(
+					gFeedModeModal.format(94), 
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(81),
           getCommonCycle(x, y, z, cycle.retract),
           feedOutput.format(F)
@@ -1244,6 +1267,7 @@ function onCyclePoint(x, y, z) {
         expandCyclePoint(x, y, z);
       } else {
         writeBlock(
+					gFeedModeModal.format(94), 
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(83),
           getCommonCycle(x, y, z, cycle.retract),
           "Q" + xyzFormat.format(cycle.incrementalDepth),
@@ -1272,6 +1296,7 @@ function onCyclePoint(x, y, z) {
     case "reaming":
       if (P > 0) {
         writeBlock(
+					gFeedModeModal.format(94), 
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(89),
           getCommonCycle(x, y, z, cycle.retract),
           "P" + secFormat.format(P),
@@ -1279,6 +1304,7 @@ function onCyclePoint(x, y, z) {
         );
       } else {
         writeBlock(
+					gFeedModeModal.format(94), 
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(85),
           getCommonCycle(x, y, z, cycle.retract),
           feedOutput.format(F)
@@ -1287,6 +1313,7 @@ function onCyclePoint(x, y, z) {
       break;
     case "stop-boring":
       writeBlock(
+				gFeedModeModal.format(94), 
         gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(86),
         getCommonCycle(x, y, z, cycle.retract),
         conditional(P > 0, "P" + secFormat.format(P)),
@@ -1295,6 +1322,7 @@ function onCyclePoint(x, y, z) {
       break;
     case "manual-boring":
       writeBlock(
+				gFeedModeModal.format(94), 
         gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(88),
         getCommonCycle(x, y, z, cycle.retract),
         "P" + secFormat.format(P), // not optional
@@ -1304,6 +1332,7 @@ function onCyclePoint(x, y, z) {
     case "boring":
       if (P > 0) {
         writeBlock(
+					gFeedModeModal.format(94), 
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(89),
           getCommonCycle(x, y, z, cycle.retract),
           "P" + secFormat.format(P), // not optional
@@ -1311,6 +1340,7 @@ function onCyclePoint(x, y, z) {
         );
       } else {
         writeBlock(
+					gFeedModeModal.format(94), 
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(85),
           getCommonCycle(x, y, z, cycle.retract),
           feedOutput.format(F)
@@ -1400,26 +1430,189 @@ function onLinear(_x, _y, _z, feed) {
       switch (radiusCompensation) {
       case RADIUS_COMPENSATION_LEFT:
         dOutput.reset();
-        writeBlock(gMotionModal.format(1), gFormat.format(41), x, y, z, dOutput.format(d), f);
+        writeBlock(gFeedModeModal.format(94), gMotionModal.format(1), gFormat.format(41), x, y, z, dOutput.format(d), f);
         break;
       case RADIUS_COMPENSATION_RIGHT:
         dOutput.reset();
-        writeBlock(gMotionModal.format(1), gFormat.format(42), x, y, z, dOutput.format(d), f);
+        writeBlock(gFeedModeModal.format(94), gMotionModal.format(1), gFormat.format(42), x, y, z, dOutput.format(d), f);
         break;
       default:
-        writeBlock(gMotionModal.format(1), gFormat.format(40), x, y, z, f);
+        writeBlock(gFeedModeModal.format(94), gMotionModal.format(1), gFormat.format(40), x, y, z, f);
       }
     } else {
-      writeBlock(gMotionModal.format(1), x, y, z, f);
+      writeBlock(gFeedModeModal.format(94), gMotionModal.format(1), x, y, z, f);
     }
   } else if (f) {
     if (getNextRecord().isMotion()) { // try not to output feed without motion
       forceFeed(); // force feed on next line
     } else {
-      writeBlock(gMotionModal.format(1), f);
+      writeBlock(gFeedModeModal.format(94), gMotionModal.format(1), f);
     }
   }
 }
+
+
+// Start of multi-axis feedrate logic
+/***** Be sure to add 'useInverseTime' to post properties if necessary. *****/
+/***** 'inverseTimeOutput' must be defined. *****/
+/***** 'headOffset' should be defined when a head rotary axis is defined. *****/
+/***** The feedrate mode must be included in motion block output (linear, circular, etc. *****/
+var dpmBPW = 0.1; // ratio of rotary accuracy to linear accuracy for DPM calculations
+var inverseTimeUnits = 1.0; // 1.0 = minutes, 60.0 = seconds
+var maxInverseTime = 999999; // maximum value to output for Inverse Time feeds
+var headOffset = 0;
+/** Calculate the multi-axis feedrate number. */
+function getMultiaxisFeed(_x, _y, _z, _a, _b, _c, feed) {
+  var f = {frn:0, fmode:0};
+  if (feed <= 0) {
+    error(localize("Feedrate is less than or equal to 0."));
+    return f;
+  }
+
+  var length = getMoveLength(_x, _y, _z, _a, _b, _c);
+
+  if (getProperty("useInverseTimeFeed")) { // inverse time
+    f.frn = inverseTimeOutput.format(getInverseTime(length, feed));
+    f.fmode = 93;
+    feedOutput.reset();
+  } else { // degrees per minute
+    f.frn = feedOutput.format(getFeedDPM(length, feed));
+    f.fmode = 94;
+  }
+  return f;
+}
+
+/** Calculate the DPM feedrate number. */
+function getFeedDPM(_moveLength, _feed) {
+  // moveLength[0] = Tool tip, [1] = XYZ, [2] = ABC
+
+  if (true) { // TCP mode is supported, output feed as FPM
+    return _feed;
+  } else { // DPM feedrate calculation
+    var moveTime = ((_moveLength[0] < 1.e-6) ? 0.001 : _moveLength[0]) / _feed;
+    var length = Math.sqrt(Math.pow(_moveLength[1], 2.0) + Math.pow((toDeg(_moveLength[2]) * dpmBPW), 2.0));
+    return length / moveTime;
+  }
+}
+
+/** Calculate the Inverse time feedrate number. */
+function getInverseTime(_length, _feed) {
+  var inverseTime;
+  if (_length < 1.e-6) { // tool doesn't move
+    if (typeof maxInverseTime === "number") {
+      inverseTime = maxInverseTime;
+    } else {
+      inverseTime = 999999;
+    }
+  } else {
+    inverseTime = _feed / _length / inverseTimeUnits;
+    if (typeof maxInverseTime === "number") {
+      if (inverseTime > maxInverseTime) {
+        inverseTime = maxInverseTime;
+      }
+    }
+  }
+  return inverseTime;
+}
+
+/** Calculate the distance of the tool position to the center of a rotary axis. */
+function getRotaryRadius(center, direction, toolPosition) {
+  var normal = direction.getNormalized();
+  var d1 = toolPosition.x - center.x;
+  var d2 = toolPosition.y - center.y;
+  var d3 = toolPosition.z - center.z;
+  var radius = Math.sqrt(
+    Math.pow((d1 * normal.y) - (d2 * normal.x), 2.0) +
+    Math.pow((d2 * normal.z) - (d3 * normal.y), 2.0) +
+    Math.pow((d3 * normal.x) - (d1 * normal.z), 2.0)
+   );
+  return radius;
+}
+
+/** Calculate the linear distance based on the rotation of a rotary axis. */
+function getRadialDistance(axis, startTool, endTool, startABC, endABC) {
+  // rotary axis does not exist
+  if (!axis.isEnabled()) {
+    return 0.0;
+  }
+
+  // calculate the rotary center based on head/table
+  var center;
+  if (axis.isHead()) {
+    var pivot;
+    if (typeof headOffset === "number") {
+      pivot = headOffset;
+    } else {
+      pivot = tool.getBodyLength();
+    }
+    center = Vector.sum(startTool, Vector.product(machineConfiguration.getSpindleAxis(), pivot));
+    center = Vector.sum(center, axis.getOffset());
+  } else {
+    center = axis.getOffset();
+}
+/*
+ * I don't understand why the center is not in (0,0,0) or (some number, 0, 0)
+ 
+	center.x=0;
+	center.y=0;
+	center.z=0;
+*/	
+  // calculate the radius of the tool end point compared to the rotary center
+  var endRadius = getRotaryRadius(center, axis.getEffectiveAxis(), endTool);
+  var startRadius = getRotaryRadius(center, axis.getEffectiveAxis(), startTool);
+
+  // calculate length of radial move
+  var deltaAng = Math.abs(endABC.getCoordinate(axis.getCoordinate()) - startABC.getCoordinate(axis.getCoordinate()));
+  while (deltaAng > Math.PI) {
+    deltaAng = 2 * Math.PI - deltaAng;
+  }
+  var radialLength = (endRadius + startRadius)/2.0 * deltaAng; // How to deal with radial movement? Take average
+  return radialLength;
+}
+
+/** Calculate tooltip, XYZ, and rotary move lengths. */
+function getMoveLength(_x, _y, _z, _a, _b, _c) {
+  // get starting and ending positions
+  var moveLength;
+  var startTool;
+  var endTool;
+  var startXYZ;
+  var endXYZ;
+  var startABC = getCurrentDirection();
+  var endABC = new Vector(_a, _b, _c);
+  
+  if (currentSection.getOptimizedTCPMode() == 0) {
+    startTool = getCurrentPosition();
+    endTool = new Vector(_x, _y, _z);
+    startXYZ = machineConfiguration.getOrientation(startABC).getTransposed().multiply(startTool);
+    endXYZ = machineConfiguration.getOrientation(endABC).getTransposed().multiply(endTool);
+  } else {
+    startXYZ = getCurrentPosition();
+    endXYZ = new Vector(_x, _y, _z);
+    startTool = machineConfiguration.getOrientation(startABC).multiply(startXYZ);
+    endTool = machineConfiguration.getOrientation(endABC).multiply(endXYZ);
+  }
+    
+  // calculate the radial portion of the move
+  var radialVector = new Vector(
+    // Order is a mystery. U affects Y and Z. This works for A-axis now. Not general though.
+		getRadialDistance(machineConfiguration.getAxisV(), startTool, endTool, startABC, endABC),
+    -getRadialDistance(machineConfiguration.getAxisU(), startTool, endTool, startABC, endABC),
+		getRadialDistance(machineConfiguration.getAxisW(), startTool, endTool, startABC, endABC));
+  
+  // calculate the lengths of move
+  // tool tip distance is the move distance based on a combination of linear and rotary axes movement
+    var linearVector = new Vector(_x, _y, _z);
+    linearVector = Vector.diff(endXYZ, startXYZ);
+    var moveVector = new Vector(_x, _y, _z);
+    moveVector = Vector.sum(linearVector, radialVector);
+   
+    moveLength = moveVector.length;
+
+    return moveLength;
+}
+// End of multi-axis feedrate logic
+
 
 function onRapid5D(_x, _y, _z, _a, _b, _c) {
   if (!currentSection.isOptimizedForMachine()) {
@@ -1455,14 +1648,23 @@ function onLinear5D(_x, _y, _z, _a, _b, _c, feed) {
   var a = aOutput.format(_a);
   var b = bOutput.format(_b);
   var c = cOutput.format(_c);
-  var f = getFeed(feed);
+  
+  // get feedrate number
+  var f = {frn:0, fmode:0};
+  if (a || b || c) {
+    f = getMultiaxisFeed(_x, _y, _z, _a, _b, _c, feed);
+  } else {
+    f.frn = feedOutput.format(feed);
+    f.fmode = 94;
+  }
+
   if (x || y || z || a || b || c) {
-    writeBlock(gMotionModal.format(1), x, y, z, a, b, c, f);
-  } else if (f) {
+    writeBlock("",gFeedModeModal.format(f.fmode), gMotionModal.format(1), x, y, z, a, b, c, f.frn);
+  } else if (f.frn) {
     if (getNextRecord().isMotion()) { // try not to output feed without motion
       forceFeed(); // force feed on next line
     } else {
-      writeBlock(gMotionModal.format(1), f);
+      writeBlock(gFeedModeModal.format(f.fmode), gMotionModal.format(1), f.frn);
     }
   }
 }
@@ -1482,13 +1684,13 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
     }
     switch (getCircularPlane()) {
     case PLANE_XY:
-      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), iOutput.format(cx - start.x, 0), jOutput.format(cy - start.y, 0), getFeed(feed));
+      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gFeedModeModal.format(94), gMotionModal.format(clockwise ? 2 : 3), iOutput.format(cx - start.x, 0), jOutput.format(cy - start.y, 0), getFeed(feed));
       break;
     case PLANE_ZX:
-      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(18), gMotionModal.format(clockwise ? 2 : 3), iOutput.format(cx - start.x, 0), kOutput.format(cz - start.z, 0), getFeed(feed));
+      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(18), gFeedModeModal.format(94), gMotionModal.format(clockwise ? 2 : 3), iOutput.format(cx - start.x, 0), kOutput.format(cz - start.z, 0), getFeed(feed));
       break;
     case PLANE_YZ:
-      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(19), gMotionModal.format(clockwise ? 2 : 3), jOutput.format(cy - start.y, 0), kOutput.format(cz - start.z, 0), getFeed(feed));
+      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(19), gFeedModeModal.format(94), gMotionModal.format(clockwise ? 2 : 3), jOutput.format(cy - start.y, 0), kOutput.format(cz - start.z, 0), getFeed(feed));
       break;
     default:
       linearize(tolerance);
@@ -1496,13 +1698,13 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
   } else if (!getProperty("useRadius")) {
     switch (getCircularPlane()) {
     case PLANE_XY:
-      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx - start.x, 0), jOutput.format(cy - start.y, 0), getFeed(feed));
+      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gFeedModeModal.format(94), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx - start.x, 0), jOutput.format(cy - start.y, 0), getFeed(feed));
       break;
     case PLANE_ZX:
-      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(18), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx - start.x, 0), kOutput.format(cz - start.z, 0), getFeed(feed));
+      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(18), gFeedModeModal.format(94), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx - start.x, 0), kOutput.format(cz - start.z, 0), getFeed(feed));
       break;
     case PLANE_YZ:
-      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(19), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), jOutput.format(cy - start.y, 0), kOutput.format(cz - start.z, 0), getFeed(feed));
+      writeBlock(gAbsIncModal.format(90), gPlaneModal.format(19), gFeedModeModal.format(94), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), jOutput.format(cy - start.y, 0), kOutput.format(cz - start.z, 0), getFeed(feed));
       break;
     default:
       linearize(tolerance);
@@ -1514,13 +1716,13 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
     }
     switch (getCircularPlane()) {
     case PLANE_XY:
-      writeBlock(gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), "R" + rFormat.format(r), getFeed(feed));
+      writeBlock(gPlaneModal.format(17), gFeedModeModal.format(94), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), "R" + rFormat.format(r), getFeed(feed));
       break;
     case PLANE_ZX:
-      writeBlock(gPlaneModal.format(18), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), "R" + rFormat.format(r), getFeed(feed));
+      writeBlock(gPlaneModal.format(18), gFeedModeModal.format(94), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), "R" + rFormat.format(r), getFeed(feed));
       break;
     case PLANE_YZ:
-      writeBlock(gPlaneModal.format(19), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), "R" + rFormat.format(r), getFeed(feed));
+      writeBlock(gPlaneModal.format(19), gFeedModeModal.format(94), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), "R" + rFormat.format(r), getFeed(feed));
       break;
     default:
       linearize(tolerance);
