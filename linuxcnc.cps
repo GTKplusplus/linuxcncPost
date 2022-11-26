@@ -172,7 +172,14 @@ properties = {
     description: "If true, the post processor will output inverse time feed mode (G93) instead of units per minute (G94)",
     group      : "preferences",
     type       : "boolean",
-    value      : false,}
+    value      : false,},
+  generate4thAxis:{
+    title      : "Generate 4th Axis code",
+    description: "If true, the post processor will output 4th axis code (A axis)",
+    group      : "preferences",
+    type       : "boolean",
+    value      : true,
+  }
 };
 
 // wcs definiton
@@ -319,7 +326,7 @@ function onOpen() {
     maximumCircularSweep = toRad(90); // avoid potential center calculation errors for CNC
   }
 
-  if (true) { // Adding 4th axis on the table. range: [-360, 359.99999]
+  if (getProperty("generate4thAxis")) { // Adding 4th axis on the table. range: [-360, 359.99999]
     var aAxis = createAxis({coordinate:0, table:true, axis:[1, 0, 0], cyclic: true, preference:1});
     machineConfiguration = new MachineConfiguration(aAxis);
 
