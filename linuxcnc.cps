@@ -963,7 +963,7 @@ function onSection() {
       onCommand(COMMAND_OPTIONAL_STOP);
     }
 
-    if (tool.number > 99) {
+    if (tool.number > 99999) {
       warning(localize("Tool number exceeds maximum value."));
     }
 
